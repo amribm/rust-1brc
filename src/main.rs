@@ -1,3 +1,4 @@
+#![feature(slice_split_once)]
 use std::collections::BTreeMap;
 use std::fmt::Display;
 use std::io::{BufRead, BufReader, Read, Seek, SeekFrom, Take};
@@ -7,6 +8,8 @@ use std::sync::{Arc, Mutex};
 use std::thread;
 use std::time::Instant;
 use std::{fs::File, io::Result};
+
+type V = i32;
 
 fn main() {
     let start = Instant::now();
@@ -99,25 +102,25 @@ struct Interval {
 }
 
 struct City {
-    min: f64,
-    max: f64,
-    total: f64,
+    min: V,
+    max: V,
+    total: V,
     count: u64,
 }
 
 impl Default for City {
     fn default() -> Self {
         City {
-            min: f64::MAX,
-            max: f64::MIN,
-            total: 0.0,
+            min: V::MAX,
+            max: V::MIN,
+            total: 0,
             count: 0,
         }
     }
 }
 
 impl City {
-    fn update(&mut self, temp: f64) {
+    fn update(&mut self, temp: V) {
         self.min = self.min.min(temp);
         self.max = self.max.max(temp);
         self.total += temp;
@@ -134,23 +137,36 @@ impl City {
 
 impl Display for City {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        let avg_temp = self.total / (self.count as f64);
-        write!(f, "{:.1}{avg_temp}{:.1}", self.min, self.max)
+        let avg_temp = format_tempreture(self.total / self.count as V);
+        write!(
+            f,
+            "{:.1}{avg_temp}{:.1}",
+            format_tempreture(self.min),
+            format_tempreture(self.max)
+        )
     }
 }
 
-fn create_shared_map(reader: Take<BufReader<File>>) -> Result<StationsMap> {
+fn create_shared_map(mut reader: Take<BufReader<File>>) -> Result<StationsMap> {
     let mut shared_map: BTreeMap<String, City> = BTreeMap::new();
-    for line in reader.lines() {
-        let line = line?;
-        let (city, temp) = line.split_once(";").unwrap();
+    let mut line = Vec::new();
+    while reader.read_until(b'\n', &mut line)? != 0 {
+        if line.last() == Some(&b'\n') {
+            line.pop();
+        }
 
-        let parsed_temp: f32 = temp.parse().unwrap();
+        let (city, temp) = &line.split_once(|&c| c == b';').unwrap();
+
+        let city = str::from_utf8(&city).unwrap();
+        let parsed_temp = parse_tempreture(temp);
+        // let parsed_temp: f32 = temp.parse().unwrap();
 
         shared_map
-            .entry(city.to_string())
+            .entry(city.to_owned())
             .or_default()
-            .update(parsed_temp as f64);
+            .update(parsed_temp);
+
+        line.clear();
     }
     Ok(shared_map)
 }
@@ -167,6 +183,10 @@ fn print_shared_map(map: StationsMap) {
     print!("{}", "}");
 }
 
+fn format_tempreture(temp: V) -> String {
+    format!("{:.1}", temp as f64 / 10.0)
+}
+
 fn merge_map(a: StationsMap, b: &StationsMap) -> StationsMap {
     let mut merged_map = a;
 
@@ -174,4 +194,27 @@ fn merge_map(a: StationsMap, b: &StationsMap) -> StationsMap {
         merged_map.entry(k.into()).or_default().merge(v);
     }
     merged_map
+}
+
+fn parse_tempreture(mut s: &[u8]) -> V {
+    let neg = if s[0] == b'-' {
+        s = &s[1..];
+        true
+    } else {
+        false
+    };
+
+    let (a, b, c) = match s {
+        [a, b, b'.', c] => (a - b'0', b - b'0', c - b'0'),
+        [a, b'.', b] => (0, a - b'0', b - b'0'),
+        _ => panic!("unknown pattern {:?}", s),
+    };
+
+    let v = (a as V) * 100 + (b as V) * 10 + (c as V);
+
+    if neg {
+        -v
+    } else {
+        v
+    }
 }
