@@ -1,6 +1,7 @@
 #![feature(slice_split_once)]
-use std::collections::BTreeMap;
+use std::collections::HashMap;
 use std::fmt::Display;
+use std::hash::{BuildHasher, Hasher};
 use std::io::{BufRead, BufReader, Read, Seek, SeekFrom, Take};
 use std::os::unix::fs::MetadataExt;
 use std::path::Path;
@@ -48,12 +49,14 @@ fn main() {
         .lock()
         .unwrap()
         .iter()
-        .fold(StationsMap::default(), |a, b| merge_map(a, &b));
+        .fold(StationsMap::with_hasher(NoOpBuildHasher), |a, b| {
+            merge_map(a, &b)
+        });
     print_shared_map(result);
     println!("\n Execution time: {:?}", start.elapsed());
 }
 
-type StationsMap = BTreeMap<u64, City>;
+type StationsMap = HashMap<u64, City, NoOpBuildHasher>;
 
 fn process_chunk(interval: Interval) -> StationsMap {
     let path = Path::new("/Users/ameer/proj/1brc/measurements.txt");
@@ -150,7 +153,7 @@ impl Display for City {
 }
 
 fn create_shared_map(mut reader: Take<BufReader<File>>) -> Result<StationsMap> {
-    let mut shared_map = StationsMap::new();
+    let mut shared_map = StationsMap::with_hasher(NoOpBuildHasher);
     let mut line = Vec::new();
     while reader.read_until(b'\n', &mut line)? != 0 {
         if line.last() == Some(&b'\n') {
@@ -176,8 +179,11 @@ fn create_shared_map(mut reader: Take<BufReader<File>>) -> Result<StationsMap> {
 }
 
 fn print_shared_map(map: StationsMap) {
+    let mut vals: Vec<_> = map.into_iter().collect();
+    vals.sort_unstable_by(|a, b| a.0.cmp(&b.0));
     print!("{}", "{");
-    for (i, (_, city)) in map.into_iter().enumerate() {
+
+    for (i, (_, city)) in vals.into_iter().enumerate() {
         let name = &city.city;
         if i == 0 {
             print!("{name}={city}");
@@ -247,4 +253,32 @@ fn to_key(data: &[u8]) -> u64 {
 
     hash ^= len as u64;
     hash
+}
+
+#[derive(Default)]
+struct NoOpHasher {
+    hash: u64,
+}
+
+impl Hasher for NoOpHasher {
+    fn write(&mut self, _bytes: &[u8]) {
+        panic!("noophasher only supports u8")
+    }
+
+    fn write_u64(&mut self, i: u64) {
+        self.hash = i
+    }
+
+    fn finish(&self) -> u64 {
+        self.hash
+    }
+}
+
+struct NoOpBuildHasher;
+
+impl BuildHasher for NoOpBuildHasher {
+    type Hasher = NoOpHasher;
+    fn build_hasher(&self) -> Self::Hasher {
+        NoOpHasher::default()
+    }
 }
