@@ -159,8 +159,17 @@ fn create_shared_map(mut reader: Take<BufReader<File>>) -> Result<StationsMap> {
         if line.last() == Some(&b'\n') {
             line.pop();
         }
+        let line_length = line.len();
+        let seprator_pos = if line[line_length - 4] == b';' {
+            line_length - 4
+        } else if line[line_length - 5] == b';' {
+            line_length - 5
+        } else {
+            line_length - 6
+        };
 
-        let (city, temp) = &line.split_once(|&c| c == b';').unwrap();
+        let (city, temp) = &line.split_at(seprator_pos);
+        let temp = &temp[1..];
 
         let parsed_temp = parse_tempreture(temp);
         // let parsed_temp: f32 = temp.parse().unwrap();
