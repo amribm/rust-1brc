@@ -25,7 +25,7 @@ fn main() {
 
     let intervals = get_intervals_for_cpus(available_cpus.into(), file_size, reader).unwrap();
 
-    let mut result = Arc::new(Mutex::new(Vec::new()));
+    let result = Arc::new(Mutex::new(Vec::new()));
 
     let mut handles = Vec::new();
 
@@ -53,7 +53,7 @@ fn main() {
     println!("\n Execution time: {:?}", start.elapsed());
 }
 
-type StationsMap = BTreeMap<String, City>;
+type StationsMap = BTreeMap<u64, City>;
 
 fn process_chunk(interval: Interval) -> StationsMap {
     let path = Path::new("/Users/ameer/proj/1brc/measurements.txt");
@@ -106,6 +106,7 @@ struct City {
     max: V,
     total: V,
     count: u64,
+    city: String,
 }
 
 impl Default for City {
@@ -115,6 +116,7 @@ impl Default for City {
             max: V::MIN,
             total: 0,
             count: 0,
+            city: "".to_string(),
         }
     }
 }
@@ -148,7 +150,7 @@ impl Display for City {
 }
 
 fn create_shared_map(mut reader: Take<BufReader<File>>) -> Result<StationsMap> {
-    let mut shared_map: BTreeMap<String, City> = BTreeMap::new();
+    let mut shared_map = StationsMap::new();
     let mut line = Vec::new();
     while reader.read_until(b'\n', &mut line)? != 0 {
         if line.last() == Some(&b'\n') {
@@ -157,13 +159,15 @@ fn create_shared_map(mut reader: Take<BufReader<File>>) -> Result<StationsMap> {
 
         let (city, temp) = &line.split_once(|&c| c == b';').unwrap();
 
-        let city = str::from_utf8(&city).unwrap();
         let parsed_temp = parse_tempreture(temp);
         // let parsed_temp: f32 = temp.parse().unwrap();
 
         shared_map
-            .entry(city.to_owned())
-            .or_default()
+            .entry(to_key(&city))
+            .or_insert(City {
+                city: str::from_utf8(&city).unwrap().to_string(),
+                ..City::default()
+            })
             .update(parsed_temp);
 
         line.clear();
@@ -173,7 +177,8 @@ fn create_shared_map(mut reader: Take<BufReader<File>>) -> Result<StationsMap> {
 
 fn print_shared_map(map: StationsMap) {
     print!("{}", "{");
-    for (i, (name, city)) in map.into_iter().enumerate() {
+    for (i, (_, city)) in map.into_iter().enumerate() {
+        let name = &city.city;
         if i == 0 {
             print!("{name}={city}");
         } else {
@@ -191,7 +196,13 @@ fn merge_map(a: StationsMap, b: &StationsMap) -> StationsMap {
     let mut merged_map = a;
 
     for (k, v) in b {
-        merged_map.entry(k.into()).or_default().merge(v);
+        merged_map
+            .entry(*k)
+            .or_insert(City {
+                city: v.city.clone(),
+                ..City::default()
+            })
+            .merge(v);
     }
     merged_map
 }
@@ -217,4 +228,23 @@ fn parse_tempreture(mut s: &[u8]) -> V {
     } else {
         v
     }
+}
+
+fn to_key(data: &[u8]) -> u64 {
+    let mut hash = 0u64;
+
+    let len = data.len();
+
+    unsafe {
+        if len > 8 {
+            hash = *(data.as_ptr() as *const u64);
+        } else {
+            for i in 0..len {
+                hash |= (*data.get_unchecked(i) as u64) << (i * 8);
+            }
+        }
+    }
+
+    hash ^= len as u64;
+    hash
 }
